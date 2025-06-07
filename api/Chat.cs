@@ -27,7 +27,7 @@ namespace Scio.ChatBotApi
         }
 
         [Function("chat")]
-        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", "get")] HttpRequest req)
+        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
         {
             try
             {
@@ -43,17 +43,25 @@ namespace Scio.ChatBotApi
                 }
 
                 var chatClient = GetChatClient();
-                var response = chatClient.CompleteChat(GetChatMessages(incomingMessages), GetCompletionOptions());
-                if (response.Value.Content[0].Text == AiConfiguration.StopConversationToken)
+                var messages = GetChatMessages(incomingMessages);
+                var options = GetCompletionOptions();
+                var response = await chatClient.CompleteChatAsync(messages, options);
+                if (response.Value.FinishReason == ChatFinishReason.ToolCalls)
+                {
+                    response = await ProcessToolCall(chatClient, messages, options, response);
+                }
+                string responseText = GetResponseText(response);
+               
+                if (responseText == PromptDefinition.StopConversationToken)
                 {
                     return ActionResults.GetViolationResult();
                 }
-                return ActionResults.GetSuccessResult(response.Value.Content[0].Text);
+                return ActionResults.GetSuccessResult(responseText);
 
             }
             catch (System.ClientModel.ClientResultException ex)
             {
-                if (ex.Status == 400)// azure ai policy violation
+                if (ex.Status == 400 && ex.Message.Contains("content_filter"))// azure ai policy violation
                 {
                     return ActionResults.GetViolationResult(ex.Message);
                 }
@@ -65,46 +73,70 @@ namespace Scio.ChatBotApi
             }
         }
 
+        private static string GetResponseText(System.ClientModel.ClientResult<ChatCompletion> response)
+        {
+          return response?.Value?.Content?.FirstOrDefault()?.Text ?? string.Empty;
+        }
+
+        private async Task<System.ClientModel.ClientResult<ChatCompletion>> ProcessToolCall(ChatClient chatClient, List<ChatMessage> messages, ChatCompletionOptions options, System.ClientModel.ClientResult<ChatCompletion> response)
+        {
+            messages.Add(new AssistantChatMessage(response.Value));
+            foreach (var toolCall in response.Value.ToolCalls)
+            {
+                if (toolCall.FunctionName == Constants.GoogleSearchToolFunctionKey)
+                {
+                    var args = JsonSerializer.Deserialize<SearchGoogleArgs>(toolCall.FunctionArguments);
+                    var searchService = new GoogleSearchService(configuration);
+                    var toolResult = await searchService.SearchGoogle(args.query, args.maxResults, args.language);
+
+                    messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
+                }
+            }
+            response = await chatClient.CompleteChatAsync(messages, options);
+            return response;
+        }
+
         private static List<ChatMessage> GetChatMessages(List<Message> incomingMessages)
         {
             List<ChatMessage> chatMessages =
                 [
-                     new SystemChatMessage(AiConfiguration.DefaultPrompt)
+                     new SystemChatMessage(PromptDefinition.DefaultPrompt)
                 ];
 
             foreach (var message in incomingMessages)
             {
-                if (message.Sender == "user")
+                if (message.Sender == Constants.User)
                 {
                     chatMessages.Add(new UserChatMessage(message.Text));
                 }
-                else if (message.Sender == "bot")
+                else if (message.Sender == Constants.Bot)
                 {
                     chatMessages.Add(new AssistantChatMessage(message.Text));
                 }
             }
-
             return chatMessages;
         }
 
         private ChatClient GetChatClient()
         {
-            var azureOpenAiEndpoint = configuration["AzureOpenAiEndpoint"];
-            var azureOpenAiApiKey = configuration["AzureOpenAiApiKey"];
-            var azureOpenAiDeploymentname = configuration["AzureOpenAiDeploymentName"];
+            var azureOpenAiEndpoint = configuration[Constants.AzureOpenAiEndpointKey];
+            var azureOpenAiApiKey = configuration[Constants.AzureOpenAiApiKey];
+            var azureOpenAiDeploymentName = configuration[Constants.AzureOpenAiDeploymentNameKey];
             AzureOpenAIClient openAiClient = new(
                 new Uri(azureOpenAiEndpoint), new AzureKeyCredential(azureOpenAiApiKey));
-            ChatClient chatClient = openAiClient.GetChatClient(azureOpenAiDeploymentname);
+            ChatClient chatClient = openAiClient.GetChatClient(azureOpenAiDeploymentName);
+
             return chatClient;
         }
 
-        private static ChatCompletionOptions GetCompletionOptions()
+        private ChatCompletionOptions GetCompletionOptions()
         {
             return new ChatCompletionOptions()
             {
                 MaxOutputTokenCount = 4096,
                 Temperature = 1.0f,
                 TopP = 1.0f,
+                Tools = { GoogleSearchService.GetSearchTool }
             };
         }
     }

@@ -1,12 +1,11 @@
 ﻿
 namespace Scio.ChatBotApi
 {
-    internal static class AiConfiguration
+    internal static class PromptDefinition
     {
         public static string StopConversationToken = "__STOP_CONVERSATION__";
         public static string DefaultPrompt = @$"
-            # System Message pro ChatGPT-4 - Moderace obsahu
-
+            # 
 Jste pokročilý AI asistent s implementovaným systémem detekce a moderace nevhodného obsahu.Vaším úkolem je identifikovat a vhodně reagovat na následující kategorie rizikového obsahu:
 
 ## Kategorie rizikového obsahu:
@@ -74,6 +73,8 @@ V případě vysoké závažnosti bude vaše odpověď přesně tento text:
 - Žádosti o pomoc při rozpoznání nebo hlášení takového obsahu
 - Historický nebo novinářský kontext bez glorifikace
 
-Vaším cílem je poskytovat bezpečné a užitečné odpovědi při současné ochraně uživatelů před škodlivým obsahem.";
+Vaším cílem je poskytovat bezpečné a užitečné odpovědi při současné ochraně uživatelů před škodlivým obsahem.
+Dnešní datum je {DateTime.Now}
+";
     }
 }

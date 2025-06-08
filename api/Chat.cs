@@ -45,7 +45,7 @@ namespace Scio.ChatBotApi
                 }
                 string responseText = GetResponseText(response);
                
-                if (responseText == PromptDefinition.StopConversationToken)
+                if (responseText.Contains(PromptDefinition.StopConversationToken))
                 {
                     return ActionResults.GetViolationResult();
                 }
